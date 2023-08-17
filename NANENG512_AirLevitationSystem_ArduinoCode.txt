@@ -1,0 +1,123 @@
+  #include <avr/interrupt.h>
+  // defines pins numbers
+  #define in1  13  //fan +ive output terminal
+  #define in2  12  //fan -ive output terminal
+  #define enA  3   //fan PWM output terminal
+
+  const int trigPin = 7; //trigger pin of the ultrasonic sensor
+  const int echoPin = 8; //echo pin of the ultrasonic sensor
+  // PID Parameters
+  float kp = 596;
+  float Ti = kp/160;
+  float Td = 601/kp;
+  float Ts = 0.01; //sampling time
+
+  float beta = kp*Td/Ts; 
+  float alpha = kp*Ts/Ti;
+  float ek = 0;   //error
+  float ek_1 = 0;
+  float pk_1 = 0;
+
+  float actual_distance;
+
+  float sk = 8; //reference set point position of the ball 8cm from the sensor
+  float yk = 0;
+  float wk,pk,qk,uk; //for PID controller [wk => proportional. qk => Derivative, pk => Integral, uk => PID controller output]
+  float val;  // Analog output voltage
+  float Vmax = 24; //Maximum output voltage to the fan
+  float sampled;
+  long duration;
+  int distance;
+  // ADC converter
+  float Read_AD_distance(){
+  //read ball position from the ultrasonic sensor
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  // Sets the trigPin on HIGH state for 10 micro seconds
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  // Reads the echoPin, returns the sound wave travel time in microseconds
+  duration = pulseIn(echoPin, HIGH);
+  // Calculating the distance
+  distance = duration * 0.034 / 2;
+    actual_distance = (10.0/1024)*distance;
+    yk = actual_distance;
+    return yk;
+  }
+
+float V2PWM (float V, float Vmax){ //convert from volt to PWM
+  float PWMval = float (255*abs(V) /Vmax);
+  if(PWMval > 255){
+    PWMval = 255;
+}
+if (V>0){
+  digitalWrite (enA,HIGH);
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+}
+else
+{
+  digitalWrite (enA,HIGH);
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, LOW);
+}
+return PWMval;
+}
+
+void timer2_init()
+{
+  //setup the timer with prescalar 1024
+  TCCR2B |= (1<< CS22)|(1 << CS20);
+  //enable timer2 overflow interrupt
+  TIMSK2 = 0x01;
+  //initialize the counter time to have 0.01s sampling time
+  TCNT2 = 157;
+}
+
+void setup() {
+  // put your setup code here, to run once:
+  pinMode(trigPin, OUTPUT); // Sets the trigPin as an Output
+  pinMode(echoPin, INPUT); // Sets the echoPin as an Input
+  Serial.begin(9600); // Starts the serial communication
+  // Set all the motor control pins to outputs
+  pinMode(enA, OUTPUT);
+  pinMode(in1, OUTPUT);
+  pinMode(in2, OUTPUT);
+  //Timer2 initialization
+  //Disable all interrupts
+  cli();
+  //Initialize timer2
+  timer2_init();
+  //Enable global interrupts after initialization
+  sei();
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+}
+
+ISR(TIMER2_OVF_vect)
+{
+  yk = Read_AD_distance(); //read plant output
+  ek =sk - yk; //calculate the error wrt reference position
+  //PID paramters calculation
+  wk = kp*ek;
+  qk = beta*(ek-ek_1);
+  pk = alpha*ek+pk_1;
+  //PID output as voltage
+  val = wk + qk + pk;
+  //PID voltage converter to PWM signal
+  uk = V2PWM(val,Vmax);
+  analogWrite(enA,uk);
+  //Debugging section
+  //Serial.print(" \t");
+  //Serial.println(uk);// Serial.print(" \t");
+  Serial.println(val); //Serial.print(" \t");
+  //Serial.println(ek);
+  /********************/
+  //PID paramters update
+  pk_1 = pk;
+  ek_1 = ek;
+  TCNT2 = 157; //reload the register to start again from the same value that yield sampling time 0.01s
+}
